@@ -1,0 +1,247 @@
+---
+title: "Introduction to `spacey`"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{introduction-to-spacey}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+`spacey` is a package designed to make it trivial to produce beautiful 
+[rayshader](https://www.rayshader.com/) maps for locations in the United States,
+letting you easily obtain and combine USGS and ESRI map data into 2D and 3D 
+images. This vignette will walk through the basic utilities
+in `spacey` and their expected uses.
+
+First, let's load our package:
+
+```{r setup}
+library(spacey)
+```
+
+The most comprehensive command in `spacey` is `automap`, which only requires 
+two vectors, one for latitude and one for longitude^[This package follows 
+[ISO 6709](https://en.wikipedia.org/wiki/ISO_6709) convention of representing 
+spatial data in the format (latitude, longitude), as opposed to the somewhat 
+popular (longitude, latitude) format.], in order to quickly generate a rayshader
+image. In fact, you can use as little as a single coordinate pair:
+
+```r
+automap(44.121268, -73.903734)
+```
+
+```{r, echo=FALSE}
+knitr::include_graphics(pkgload::package_file("man/figures/README-johns_brook_basic-1.png"))
+```
+
+And it isn't much harder to add overlays of satellite imagery:
+
+``` r
+automap(44.121268, -73.903734, overlay = "World_Imagery")
+```
+
+```{r echo=FALSE}
+knitr::include_graphics(pkgload::package_file("man/figures/README-johns_brook_overlay-1.png"))
+```
+
+Or turn those into 3D visuals:
+
+``` r
+automap(44.121268,
+  -73.903734,
+  overlay = "World_Imagery",
+  method = "3d",
+  zoom = 10
+)
+```
+
+```{r echo=FALSE}
+knitr::include_graphics(pkgload::package_file("man/figures/README-johns_brook_3d-1.png"))
+```
+
+In addition, `automap` supports parallelization with `future` straight out of 
+the box to speed up map generation -- just call `future::plan("multisession")` 
+(or whatever plan you prefer) before `automap` to run the different rayshading 
+processes in parallel, notably speeding up the whole map generation process.
+
+All of the elevation and imagery data pulled by this package comes via the 
+[USGS National Map API](https://www.usgs.gov/core-science-systems/national-geospatial-program/national-map), 
+with the satellite imagery in particular coming via 
+[ESRI's MapServer API](https://services.arcgisonline.com/ArcGIS/rest/services). 
+If you want to save these off as files (so that you can work on your maps 
+without an Internet connection, or archive the data used), you can set 
+`save.file = TRUE` in your automap call and provide names for your output files:
+
+``` r
+automap(44.121268, 
+        -73.903734, 
+        overlay = "World_Imagery",
+        save.file = TRUE, 
+        tif.filename = "my_heightmap.tif",
+        png.filename = "my_overlay.png")
+```
+
+It's also possible to set `save.file` to either `png` or `tif`, if you're only 
+interested in saving one type of file locally -- in which case, you only need to 
+provide one filename!
+
+In order to then build our maps from those local files, we only need to swap the
+`save.file = TRUE` argument out for `from.file = TRUE` in order to build from 
+local files:
+
+``` r
+automap(44.121268, 
+        -73.903734, 
+        overlay = "World_Imagery",
+        from.file = TRUE, 
+        tif.filename = "my_heightmap.tif",
+        png.filename = "my_overlay.png")
+```
+
+The `automap` function can be customized in dozens of ways to quickly iterate on
+maps, changing the specified overlays, terrain heights, color shading, and more.
+However, since every image I include here has to be downloaded by every single 
+person who installs the package (and CRAN has a limit on package sizes for this 
+very reason), those topics are covered online at the [package's documentation 
+website.](https://mikemahoney218.github.io/spacey/articles/automap-walkthrough.html)
+Instead, this vignette will focus on the other functions included in the 
+`spacey` package.
+
+If you only want to access the USGS and ESRI APIs, for instance, there's no need 
+to use the `automap` function at all. Instead, you can use the `get_heightmap` 
+and `get_image_overlay` functions to accomplish a similar effect.
+
+The largest difference with these functions (other than their return objects) is
+that they expect a _bounding box_ for your map, while `automap` will calculate 
+one for you based on the spatial extent of your input data and any value you 
+pass to its `distance` argument. The bounding box needs to be a list containing
+coordinates for the lower left and upper right corners of your data (as two 
+separate list elements) -- you can either provide these yourself, or use one of
+the two functions provided by `spacey` to do it for you!
+
+The first of these functions is `get_centroid_bounding_box`, which is what 
+`automap` uses to find the bounding box for a single coordinate pair. Just 
+provide a named vector with latitude and longitude for the center of your map, 
+alongside the distance you want your map to span (from the central location to 
+any corner):
+
+```{r}
+get_centroid_bounding_box(c(
+  "lat" = 44.121268,
+  "lng" = -73.903734
+),
+distance = 10
+)
+```
+
+If you have more than just a single coordinate pair, you're still able to get a 
+bounding box for your data via `get_coord_bounding_box` -- just pass it vectors 
+containing your latitude and longitude data:
+
+```{r}
+df <- data.frame(
+  lat = c(44.05771, 44.18475),
+  lng = c(-73.99212, -73.81515)
+)
+
+get_coord_bounding_box(df$lat, df$lng)
+```
+
+You can also still take advantage of expanding the map to a certain distance 
+from your data's central point by finding the centroid for your dataset -- using
+`get_centroid` -- and then passing that as the first argument to 
+`get_centroid_bounding_box`:
+
+```{r}
+get_centroid(df$lat, df$lng)
+
+get_centroid_bounding_box(get_centroid(df$lat, df$lng), 10)
+```
+
+All of these functions also have the option to work with (and return) data in 
+radians by setting `coord.unit = "radians"`; the default, however, is decimal 
+degrees. Functions which take `distance` arguments also have a `dist.unit` 
+argument, which can be used to provide distances in `"km"` (the default), 
+`"miles", "m"` (for meters), or `"ft"`. Note that the conversions between these
+units are imperfect, so use `km` if precision is needed.
+
+No matter which method you use, that bounding box can then be passed to 
+`get_heightmap` to obtain USGS elevation data for your area of interest, or 
+`get_image_overlay` to obtain satellite images:
+
+```r
+bbox <- get_centroid_bounding_box(c("lat" = 44.121268, 
+                                 "lng" = -73.903734), 
+                                distance = 10)
+
+heightmap <- get_heightmap(bbox)
+```
+
+Both of these functions also provide options to save the downloaded imagery to 
+file -- either using `save.tif` in `get_heightmap` or `save.png` in 
+`get_image_overlay`. You can then load these images back into an R session using 
+the `load_heightmap` or `load_overlay` functions, respectively, which will 
+create objects ready to be used for mapping with rayshader. 
+
+If we wanted, we can now
+replicate the default behavior of `automap` (although without supporting 
+parallelization via `future`) by doing the following:
+
+``` r
+library(rayshader)
+heightmap %>%
+  sphere_shade(zscale = 9,
+               texture = "imhof4") %>%
+  add_water(detect_water(heightmap,
+                         zscale = 9),
+      color = "imhof4") %>%
+      add_shadow(ray_shade(heightmap,
+                           zscale = 9),
+                 max_darken = 0.5) %>%
+      add_shadow(ambient_shade(heightmap, zscale = 9), max_darken = 0.5) %>%
+  plot_map()
+```
+
+```{r, echo=FALSE}
+knitr::include_graphics(pkgload::package_file("man/figures/README-johns_brook_basic-1.png"))
+```
+
+My guess is that most people who use `spacey` will eventually move on to 
+carefully designing their output maps, since you're able to control things with 
+much more granularity using the core `rayshader` functions than you are 
+with `spacey`. However, the data import functions and quick 
+iteration provided by `spacey` will hopefully help you get started with making 
+these beautiful maps, letting you spend less time fighting with data and more 
+time communicating your landscape to your audience.
+
+## Miscellania
+
+In addition to these main functions, `spacey` implements basic functions for 
+converting radians to degrees (via the function `rad_to_deg`) and back again
+(via `deg_to_rad`), which may be of some use. Note that these conversions are 
+done simply and will incur some error from floating point arithmetic.
+
+It should be noted that `spacey` really isn't a geospatial processing library, 
+and these commands are built to be exactly as accurate as needed by core package
+functions. For that reason, you probably shouldn't rely upon `get_centroid` or 
+`get_*_bounding_box` for points near extreme latitudes or longitudes, as there
+are no adjustments built in to deal with these locations, since the USGS data 
+`spacey` is designed to work with doesn't really wrap those. 
+
+## Acknowledgements
+
+`rayshader`, which powers the maps coming out of `automap`, was built by 
+[Tyler Morgan-Wall](https://www.tylermw.com/), and can be extended _far_ 
+beyond what I've done here -- check out 
+[its main website.](https://www.rayshader.com/)
+
+The USGS and ESRI query code has its roots in 
+[Will Bishop's fantastic essay](https://wcmbishop.github.io/rayshader-demo/) on 
+using `rayshader`.
