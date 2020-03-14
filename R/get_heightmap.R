@@ -16,6 +16,8 @@
 #' resulting .tif to.
 #' @param sr_bbox Spatial reference code (ISO 19111) for bounding box
 #' @param sr_image Spatial reference code (ISO 19111) for image
+#' @param verbose Logical: print out debug information while trying to query the
+#' elevation map server?
 #'
 #' @return A matrix object containing elevation data suitable for use with
 #' mapping functions. Returned invisibly.
@@ -41,7 +43,8 @@ get_heightmap <- function(bbox,
                           save.tif = FALSE,
                           tif.filename = NULL,
                           sr_bbox = 4326,
-                          sr_image = 4326) {
+                          sr_image = 4326,
+                          verbose = FALSE) {
   stopifnot(is.logical(save.tif))
   if (img.width > 8000 || img.height > 8000) {
     stop(paste(
@@ -62,40 +65,65 @@ get_heightmap <- function(bbox,
   }
 
   url <- httr::parse_url("https://elevation.nationalmap.gov/arcgis/rest/services/3DEPElevation/ImageServer/exportImage")
-  res <- httr::GET(
-    url,
-    query = list(
-      bbox = paste(min(first_corner[["lng"]], second_corner[["lng"]]),
-        min(first_corner[["lat"]], second_corner[["lat"]]),
-        max(second_corner[["lng"]], first_corner[["lng"]]),
-        max(second_corner[["lat"]], first_corner[["lat"]]),
-        sep = ","
-      ),
-      bboxSR = sr_bbox,
-      imageSR = sr_image,
-      size = paste(img.width, img.height, sep = ","),
-      format = "tiff",
-      pixelType = "F32",
-      noDataInterpretation = "esriNoDataMatchAny",
-      interpolation = "+RSP_BilinearInterpolation",
-      f = "json"
+
+  counter <- 0
+
+  get_tif <- function() {
+    res <- httr::GET(
+      url,
+      query = list(
+        bbox = paste(min(first_corner[["lng"]], second_corner[["lng"]]),
+          min(first_corner[["lat"]], second_corner[["lat"]]),
+          max(second_corner[["lng"]], first_corner[["lng"]]),
+          max(second_corner[["lat"]], first_corner[["lat"]]),
+          sep = ","
+        ),
+        bboxSR = sr_bbox,
+        imageSR = sr_image,
+        size = paste(img.width, img.height, sep = ","),
+        format = "tiff",
+        pixelType = "F32",
+        noDataInterpretation = "esriNoDataMatchAny",
+        interpolation = "+RSP_BilinearInterpolation",
+        f = "json"
+      )
     )
-  )
 
-  if (httr::status_code(res) == 200) {
-    body <- httr::content(res, type = "application/json")
-
-    img_res <- httr::GET(body$href)
-    img_bin <- httr::content(img_res, "raw")
-
-    if (save.tif) {
-      writeBin(img_bin, tif.filename)
-    } else {
-      tif.filename <- tempfile("download", tempdir(), ".tif")
-      writeBin(img_bin, tif.filename)
+    if (httr::status_code(res) != 200) {
+      stop(paste(
+        "Query returned error code",
+        httr::status_code(res)
+      ))
     }
+
+    body <- httr::content(res, type = "application/json")
+    img_res <- httr::GET(body$href)
+  }
+
+  img_res <- get_tif()
+  counter <- 1
+  while (httr::status_code(img_res) != 200 && counter < 15) {
+    img_res <- get_tif()
+    if (verbose) {
+      print(paste0(
+        "Attempt #", counter, ": status code ",
+        httr::status_code(img_res)
+      ))
+    }
+    counter <- counter + 1
+  }
+
+  if (httr::status_code(img_res) != 200) {
+    stop(paste("Map server returned error code", httr::status_code(img_res)))
+  }
+
+  img_bin <- httr::content(img_res, "raw")
+
+  if (save.tif) {
+    writeBin(img_bin, tif.filename)
   } else {
-    stop(res)
+    tif.filename <- tempfile("download", tempdir(), ".tiff")
+    writeBin(img_bin, tif.filename)
   }
 
   raster_read <- raster::raster(tif.filename)
